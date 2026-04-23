@@ -2,27 +2,9 @@ import TelegramBot from 'node-telegram-bot-api';
 import { ensureStorage, requireEnv, env } from './config.js';
 import { registerCommands } from './commands/register.js';
 import { appendAppLog } from './services/logger.js';
-import { getRepoInfo } from './services/repoStore.js';
-import { readState, writeState } from './services/stateStore.js';
 
 ensureStorage();
 requireEnv();
-
-const state = readState();
-if (!state.activeRepo && env.defaultRepo) {
-  const defaultRepo = getRepoInfo(env.defaultRepo);
-
-  if (defaultRepo?.exists) {
-    writeState({ activeRepo: env.defaultRepo });
-    appendAppLog('info', 'Initialized default repo from .env', {
-      defaultRepo: env.defaultRepo
-    });
-  } else {
-    appendAppLog('warn', 'DEFAULT_REPO was configured but not usable', {
-      defaultRepo: env.defaultRepo
-    });
-  }
-}
 
 const bot = new TelegramBot(env.token, {
   polling: {
@@ -62,6 +44,6 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 appendAppLog('info', 'TeleDev Orchestrator started', {
   allowedChatId: env.allowedChatId,
-  defaultRepo: env.defaultRepo
+  reposBaseDir: env.reposBaseDir
 });
 console.log('TeleDev Orchestrator V1 is running with Telegram polling.');

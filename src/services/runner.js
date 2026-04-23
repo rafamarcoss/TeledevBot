@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { appendRun } from './logger.js';
 import { detectLaravelApp } from './repoStore.js';
@@ -145,6 +146,16 @@ function normalizeErrorOutput(error) {
   return error.message;
 }
 
+function ensureCodexRepo(cwd) {
+  if (!fs.existsSync(cwd)) {
+    throw new Error(`Repo path does not exist: ${cwd}`);
+  }
+
+  if (!fs.existsSync(path.join(cwd, '.git'))) {
+    throw new Error('Codex execution requires a git repository.');
+  }
+}
+
 export async function runPreset(preset, cwd) {
   const selected = PRESETS[preset];
   if (!selected) {
@@ -193,13 +204,7 @@ export async function runPreset(preset, cwd) {
 }
 
 export async function runCodex(prompt, cwd) {
-  if (!fs.existsSync(cwd)) {
-    throw new Error(`Repo path does not exist: ${cwd}`);
-  }
-
-  if (!fs.existsSync(path.join(cwd, '.git'))) {
-    throw new Error('Codex execution requires a git repository.');
-  }
+  ensureCodexRepo(cwd);
 
   const startedAt = new Date().toISOString();
 
@@ -236,6 +241,115 @@ export async function runCodex(prompt, cwd) {
     appendRun(payload);
     return payload;
   }
+}
+
+export async function runCodexPrompt(prompt, cwd, options = {}) {
+  ensureCodexRepo(cwd);
+
+  const { onAgentMessage, onParseError } = options;
+  const startedAt = new Date().toISOString();
+  const messages = [];
+  const errors = [];
+  const parseErrors = [];
+  let stdoutBuffer = '';
+  let stderr = '';
+  let sawTurnCompleted = false;
+
+  return new Promise((resolve) => {
+    const child = spawn('codex', ['exec', '--json', '--sandbox', 'danger-full-access', prompt], {
+      cwd,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    function handleLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      let event;
+      try {
+        event = JSON.parse(trimmed);
+      } catch (error) {
+        parseErrors.push(trimmed);
+        if (onParseError) {
+          onParseError(error, trimmed);
+        }
+        return;
+      }
+
+      if (event.type === 'turn.completed') {
+        sawTurnCompleted = true;
+        return;
+      }
+
+      if (event.type !== 'item.completed' || event.item?.type !== 'agent_message') {
+        return;
+      }
+
+      const text = event.item?.text;
+      if (!text) {
+        return;
+      }
+
+      messages.push(text);
+      if (onAgentMessage) {
+        onAgentMessage(text);
+      }
+    }
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || '';
+      for (const line of lines) {
+        handleLine(line);
+      }
+    });
+
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (error) => {
+      errors.push(normalizeErrorOutput(error));
+    });
+
+    child.on('close', (code, signal) => {
+      if (stdoutBuffer.trim()) {
+        handleLine(stdoutBuffer);
+      }
+
+      const success = code === 0 && sawTurnCompleted && errors.length === 0;
+      const output = [
+        ...messages,
+        stderr.trim(),
+        ...errors
+      ].filter(Boolean).join('\n');
+
+      const payload = {
+        preset: 'prompt',
+        cwd,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        success,
+        exitCode: code,
+        signal,
+        turnCompleted: sawTurnCompleted,
+        parseErrorCount: parseErrors.length,
+        messages,
+        stderr: stderr.trim(),
+        errors,
+        output
+      };
+
+      appendRun(payload);
+      resolve(payload);
+    });
+  });
 }
 
 export async function runGitCommit(message, cwd) {

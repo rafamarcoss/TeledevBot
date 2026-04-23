@@ -1,10 +1,14 @@
 import { env } from '../config.js';
 import { formatError, formatRepos, isAuthorized, requireActiveRepo, shrinkOutput } from './helpers.js';
-import { allowedPresets, runCodex, runGitCommit, runPreset } from '../services/runner.js';
-import { readState, writeState } from '../services/stateStore.js';
+import { allowedPresets, runCodex, runCodexPrompt, runGitCommit, runPreset } from '../services/runner.js';
+import { getActiveRepo, setActiveRepo } from '../services/stateStore.js';
 import { readAgents } from '../services/agentReader.js';
+import { sendPromptReportEmail } from '../services/emailService.js';
 import { appendAppLog, appendPrompt, readLastRun } from '../services/logger.js';
-import { getRepoInfo } from '../services/repoStore.js';
+import { getRepoInfo, listRepos } from '../services/repoStore.js';
+
+const activePromptRuns = new Map();
+const PROMPT_PROGRESS_INTERVAL_MS = 10 * 60_000;
 
 function helpText() {
   return [
@@ -82,49 +86,62 @@ export function createMessageHandler(bot) {
       if (text.startsWith('/repo')) {
         const name = text.replace('/repo', '').trim();
         if (!name) {
-          await send(bot, chatId, 'Usage: /repo <name>');
+          await send(bot, chatId, 'Uso: /repo <nombre>');
           return;
         }
 
         const repo = getRepoInfo(name);
 
         if (!repo) {
-          await send(bot, chatId, `Repo not found: ${name}`);
+          const available = listRepos().map((candidate) => candidate.name).join(', ') || '(ninguno)';
+          await send(bot, chatId, [
+            `No encontre el repo: ${name}`,
+            `Disponibles: ${available}`,
+            '',
+            'Usa /repos para ver la lista limpia.'
+          ].join('\n'));
           return;
         }
 
-        if (!repo.exists) {
-          await send(bot, chatId, `Repo path does not exist for ${name}: ${repo.path}`);
+        if (!repo.exists || !repo.hasGit) {
+          await send(bot, chatId, `El repo "${name}" no esta disponible como repo git valido.`);
           return;
         }
 
-        writeState({ activeRepo: name });
+        setActiveRepo(chatId, msg?.from?.id, name);
+        appendAppLog('info', 'Active repo selected', {
+          chatId,
+          userId: msg?.from?.id || null,
+          repoName: name,
+          repoPath: repo.path
+        });
+
         await send(bot, chatId, [
-          `Active repo set to: ${name}`,
-          `Path: ${repo.path}`,
-          `Git: ${repo.hasGit ? 'yes' : 'no'}`,
-          `Laravel app: ${repo.laravelApp.exists ? repo.laravelApp.displayPath : 'not found'}`
+          `Repo activo: ${name}`,
+          `Ruta: ${repo.path}`,
+          `Git: ${repo.hasGit ? 'si' : 'no'}`,
+          `Laravel app: ${repo.laravelApp.exists ? repo.laravelApp.displayPath : 'no detectada'}`
         ].join('\n'));
         return;
       }
 
       if (text === '/status') {
-        const state = readState();
-        if (!state.activeRepo) {
-          await send(bot, chatId, 'No active repo selected.');
+        const active = getActiveRepo(chatId, msg?.from?.id);
+        if (!active?.repoName) {
+          await send(bot, chatId, 'No hay repo activo. Primero usa /repos y luego /repo <nombre>.');
           return;
         }
 
-        const repo = getRepoInfo(state.activeRepo);
+        const repo = getRepoInfo(active.repoName);
         const agents = repo?.exists ? readAgents(repo.path) : null;
 
         await send(bot, chatId, [
-          `Active repo: ${state.activeRepo}`,
-          `Path: ${repo?.path || '(missing)'}`,
-          `Repo exists: ${repo?.exists ? 'yes' : 'no'}`,
-          `Git repo: ${repo?.hasGit ? 'yes' : 'no'}`,
-          `Laravel app: ${repo?.laravelApp?.exists ? repo.laravelApp.displayPath : 'not found'}`,
-          `AGENTS.md: ${agents ? 'found' : 'not found'}`,
+          `Repo activo: ${active.repoName}`,
+          `Ruta: ${repo?.path || '(no disponible)'}`,
+          `Existe: ${repo?.exists ? 'si' : 'no'}`,
+          `Git: ${repo?.hasGit ? 'si' : 'no'}`,
+          `Laravel app: ${repo?.laravelApp?.exists ? repo.laravelApp.displayPath : 'no detectada'}`,
+          `AGENTS.md: ${agents ? 'encontrado' : 'no encontrado'}`,
           `Allowed presets: ${allowedPresets().join(', ')}`
         ].join('\n'));
         return;
@@ -137,7 +154,7 @@ export function createMessageHandler(bot) {
           return;
         }
 
-        const { repoName, repoPath } = requireActiveRepo();
+        const { repoName, repoPath } = requireActiveRepo(msg);
 
         appendAppLog('info', 'Starting preset run', {
           chatId,
@@ -193,7 +210,7 @@ export function createMessageHandler(bot) {
           return;
         }
 
-        const { repoName, repoPath } = requireActiveRepo();
+        const { repoName, repoPath } = requireActiveRepo(msg);
 
         appendAppLog('info', 'Starting Codex run', {
           chatId,
@@ -234,7 +251,7 @@ export function createMessageHandler(bot) {
           return;
         }
 
-        const { repoName, repoPath } = requireActiveRepo();
+        const { repoName, repoPath } = requireActiveRepo(msg);
 
         appendAppLog('info', 'Starting git commit', {
           chatId,
@@ -268,18 +285,25 @@ export function createMessageHandler(bot) {
         return;
       }
 
-      if (text.startsWith('/prompt')) {
+      if (text === '/prompt' || text.startsWith('/prompt ')) {
         const prompt = text.replace('/prompt', '').trim();
         if (!prompt) {
           await send(bot, chatId, 'Usage: /prompt <text>');
           return;
         }
 
-        const { repoName, repoPath } = requireActiveRepo();
+        const { repoName, repoPath } = requireActiveRepo(msg);
         const agents = readAgents(repoPath);
+
+        if (activePromptRuns.has(chatId)) {
+          await send(bot, chatId, 'Ya hay una ejecucion de /prompt en curso para este chat. Espera a que termine.');
+          return;
+        }
 
         const entry = {
           createdAt: new Date().toISOString(),
+          chatId,
+          userId: msg?.from?.id || null,
           repoName,
           repoPath,
           prompt,
@@ -288,12 +312,106 @@ export function createMessageHandler(bot) {
 
         appendPrompt(entry);
 
-        await send(bot, chatId, [
-          `Prompt saved for repo: ${repoName}`,
-          `AGENTS.md: ${agents ? 'attached in local context' : 'not found'}`,
-          '',
-          prompt
-        ].join('\n'));
+        appendAppLog('info', 'Starting prompt Codex run', {
+          chatId,
+          repoName,
+          repoPath,
+          promptLength: prompt.length,
+          hasAgents: Boolean(agents)
+        });
+
+        activePromptRuns.set(chatId, {
+          repoName,
+          repoPath,
+          startedAt: new Date().toISOString()
+        });
+
+        await send(bot, chatId, 'Tarea iniciada. Te avisaré al terminar.');
+
+        const progressSends = [];
+        const progressTimer = setInterval(() => {
+          const progressSend = send(bot, chatId, 'La tarea sigue en curso.');
+          progressSends.push(progressSend);
+          progressSend.catch((error) => {
+            appendAppLog('error', 'Failed to send prompt progress message', {
+              chatId,
+              error: formatError(error)
+            });
+          });
+        }, PROMPT_PROGRESS_INTERVAL_MS);
+
+        try {
+          const result = await runCodexPrompt(prompt, repoPath, {
+            onParseError: (error, line) => {
+              appendAppLog('warn', 'Failed to parse Codex JSON event', {
+                chatId,
+                repoName,
+                error: formatError(error),
+                line: shrinkOutput(line, 500)
+              });
+            }
+          });
+
+          clearInterval(progressTimer);
+          await Promise.allSettled(progressSends);
+
+          appendAppLog('info', 'Prompt Codex run finished', {
+            chatId,
+            repoName,
+            repoPath,
+            success: result.success,
+            turnCompleted: result.turnCompleted,
+            exitCode: result.exitCode,
+            outputLength: result.output?.length || 0
+          });
+
+          const emailReport = {
+            repoName,
+            repoPath,
+            startedAt: result.startedAt,
+            finishedAt: result.finishedAt,
+            prompt,
+            status: result.success ? 'correcto' : 'error',
+            success: result.success,
+            resultText: result.output,
+            errorText: result.success ? '' : [
+              `Exit code: ${result.exitCode ?? '(sin codigo)'}`,
+              result.output
+            ].filter(Boolean).join('\n'),
+            result
+          };
+
+          let emailStatus = { skipped: true, reason: 'disabled' };
+          try {
+            emailStatus = await sendPromptReportEmail(emailReport);
+          } catch (error) {
+            appendAppLog('error', 'Failed to send prompt email', {
+              chatId,
+              repoName,
+              repoPath,
+              error: formatError(error)
+            });
+            await send(bot, chatId, result.success
+              ? 'Tarea finalizada, pero falló el envío del correo.'
+              : 'La tarea falló y también falló el envío del correo.');
+            return;
+          }
+
+          if (!result.success) {
+            const exitSummary = result.exitCode === null || result.exitCode === undefined
+              ? 'sin codigo'
+              : `exit code ${result.exitCode}`;
+            await send(bot, chatId, `La tarea falló (${exitSummary}). ${emailStatus.skipped ? 'Email no configurado.' : 'Revisa tu correo.'}`);
+            return;
+          }
+
+          await send(bot, chatId, emailStatus.skipped
+            ? 'Tarea finalizada. Email no configurado.'
+            : 'Tarea finalizada. Revisa tu correo.');
+        } finally {
+          clearInterval(progressTimer);
+          activePromptRuns.delete(chatId);
+        }
         return;
       }
 

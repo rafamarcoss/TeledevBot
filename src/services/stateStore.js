@@ -1,33 +1,20 @@
-import fs from 'node:fs';
-import { stateFile, storageDir } from '../config.js';
+const activeRepos = new Map();
 
-function defaultState() {
-  return {
-    activeRepo: null,
-    updatedAt: null
-  };
+function stateKey(chatId, userId = null) {
+  return `${chatId}:${userId || chatId}`;
 }
 
-export function readState() {
-  if (!fs.existsSync(storageDir)) {
-    fs.mkdirSync(storageDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(stateFile)) {
-    fs.writeFileSync(stateFile, JSON.stringify(defaultState(), null, 2));
-  }
-
-  return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+export function getActiveRepo(chatId, userId = null) {
+  return activeRepos.get(stateKey(chatId, userId)) || null;
 }
 
-export function writeState(nextState) {
-  const current = readState();
-  const payload = {
-    ...current,
-    ...nextState,
+export function setActiveRepo(chatId, userId, repoName) {
+  activeRepos.set(stateKey(chatId, userId), {
+    repoName,
     updatedAt: new Date().toISOString()
-  };
+  });
+}
 
-  fs.writeFileSync(stateFile, JSON.stringify(payload, null, 2));
-  return payload;
+export function clearActiveRepos() {
+  activeRepos.clear();
 }

@@ -1,37 +1,49 @@
 import { env } from '../config.js';
-import { getRepoInfo, getRepoPath, readRepos } from '../services/repoStore.js';
-import { readState } from '../services/stateStore.js';
+import { getRepoPath, listRepos } from '../services/repoStore.js';
+import { getActiveRepo } from '../services/stateStore.js';
 
 export function isAuthorized(msg) {
   return String(msg.chat.id) === String(env.allowedChatId);
 }
 
-export function requireActiveRepo() {
-  const state = readState();
-  if (!state.activeRepo) {
-    throw new Error('No active repo selected. Use /repo <name>.');
+export function requireActiveRepo(msg) {
+  const chatId = msg?.chat?.id;
+  const userId = msg?.from?.id;
+  const active = getActiveRepo(chatId, userId);
+
+  if (!active?.repoName) {
+    throw new Error('No hay repo activo. Primero usa /repos para ver opciones y luego /repo <nombre>.');
   }
 
-  const repoPath = getRepoPath(state.activeRepo);
+  const repoPath = getRepoPath(active.repoName);
   if (!repoPath) {
-    throw new Error('Active repo is missing in repos.json.');
+    throw new Error(`El repo activo "${active.repoName}" ya no esta disponible. Usa /repos y selecciona otro con /repo <nombre>.`);
   }
 
   return {
-    repoName: state.activeRepo,
+    repoName: active.repoName,
     repoPath
   };
 }
 
 export function formatRepos() {
-  const repos = readRepos();
-  const lines = Object.keys(repos).sort().map((name) => {
-    const info = getRepoInfo(name);
-    const status = info.exists ? 'ok' : 'missing';
-    return `- ${name}: ${info.path} [${status}]`;
-  });
+  const repos = listRepos();
 
-  return lines.length > 0 ? lines.join('\n') : 'No repos configured in repos.json.';
+  if (repos.length === 0) {
+    return [
+      'No encontre repos disponibles.',
+      `Base: ${env.reposBaseDir || '(sin configurar)'}`,
+      '',
+      'Solo aparecen subcarpetas directas que contienen .git.'
+    ].join('\n');
+  }
+
+  return [
+    'Repos disponibles:',
+    ...repos.map((repo) => `- ${repo.name}`),
+    '',
+    'Selecciona uno con /repo <nombre>.'
+  ].join('\n');
 }
 
 export function shrinkOutput(text, max = 3500) {

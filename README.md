@@ -30,7 +30,6 @@ sudo apt update
 sudo apt install -y nodejs npm
 cd teledev-orchestrator-v1
 cp .env.example .env
-cp repos.example.json repos.json
 npm install
 npm run dev
 ```
@@ -42,6 +41,14 @@ TELEGRAM_POLLING_TIMEOUT=30
 TELEGRAM_POLLING_INTERVAL=1000
 ```
 
+Repo discovery:
+
+```bash
+REPOS_BASE_DIR=/absolute/path/to/your/repos
+```
+
+The bot lists direct subfolders of `REPOS_BASE_DIR` that contain a `.git` directory. The folder name is the repo name used by `/repo <name>`.
+
 ## Telegram setup
 
 1. Create a bot with BotFather.
@@ -52,7 +59,7 @@ TELEGRAM_POLLING_INTERVAL=1000
    curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"
    ```
 5. Put the chat ID into `.env`.
-6. Replace `DEFAULT_REPO` with one of the repo names from `repos.json`, or leave it empty.
+6. Set `REPOS_BASE_DIR` to the common parent folder that contains your local git repos.
 
 ## Example commands
 
@@ -71,5 +78,6 @@ TELEGRAM_POLLING_INTERVAL=1000
 
 - This V1 uses a command whitelist.
 - It does not execute arbitrary shell commands.
+- It discovers repos from `REPOS_BASE_DIR`; `repos.json` is no longer used.
 - It is designed to be safe enough for a local-first MVP.
 - `npm run verify` simulates the Telegram commands locally and checks logs, repo selection, and safe preset execution.

@@ -13,6 +13,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "execa": "^9.5.2",
-    "node-telegram-bot-api": "^0.66.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "nodemailer": "^8.0.5"
   }
 }
