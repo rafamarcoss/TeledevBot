@@ -1,0 +1,18 @@
+{
+  "name": "teledev-orchestrator-v1",
+  "version": "0.1.0",
+  "description": "Telegram-based local development orchestrator for WSL/Linux",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "lint:check": "node -e \"console.log('No linter configured in V1')\"",
+    "verify": "node src/scripts/verify.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "execa": "^9.5.2",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}

@@ -1,0 +1,128 @@
+Read AGENTS.md and follow it strictly.
+
+Task:
+Build a production-minded V1 of a local-first Telegram-based remote orchestration tool for development workflows.
+
+Product intent:
+This tool will run on my own WSL/Linux machine and let me control local development workflows from my phone through Telegram.
+It is not a public SaaS.
+It is a private operator tool for one trusted user.
+The goal is to create a clean, credible V1 that is useful in practice and also strong enough to present as a portfolio project.
+
+Core concept:
+- Telegram is the control interface
+- the local machine is the execution engine
+- repositories live locally on disk
+- the tool should safely orchestrate repo-aware development actions
+- keep V1 focused, secure, and maintainable
+
+Technical direction:
+- Use Node.js
+- Use a clear modular structure
+- Run in WSL/Linux
+- Use environment variables for secrets
+- Restrict usage to a single allowed Telegram chat ID
+- Prefer explicit command allowlists over arbitrary shell execution
+- Keep storage simple in V1 (JSON/files is acceptable)
+- Prefer readability and extensibility over overengineering
+
+V1 scope:
+1. Telegram bot foundation
+   - connect via bot token
+   - poll for messages
+   - authorize only one Telegram chat ID
+   - ignore unauthorized users safely
+
+2. Repo registry
+   - support multiple local repositories via a config file
+   - include a command to list repos
+   - include a command to select the active repo
+   - persist active repo state locally
+
+3. Safe local execution
+   - implement a command allowlist/preset system
+   - do not allow arbitrary raw shell execution in V1
+   - include a few useful preset commands such as:
+     - git status
+     - docker compose ps
+     - php artisan test
+     - php artisan route:list
+     - pwd
+     - ls -la
+   - run each preset inside the selected repo path
+   - return readable output to Telegram
+   - truncate very large output safely
+
+4. Prompt workflow
+   - include a /prompt command
+   - store prompt runs locally with timestamp, repo, and prompt text
+   - detect and read AGENTS.md in the active repo if present
+   - prepare the system so future versions can plug prompt execution into Codex or other tools
+   - in V1 it is enough to save the prompt and confirm the repo/context clearly
+
+5. Logging and traceability
+   - store execution logs locally
+   - store prompt logs locally
+   - include a command to retrieve the latest execution log
+   - make logs simple and inspectable
+
+6. UX
+   - command responses should be concise and useful
+   - errors should be clear
+   - the app should be understandable quickly
+   - keep naming clean and professional
+
+Security constraints:
+- only one allowed Telegram chat ID may use the bot
+- use .env for secrets
+- add .env.example
+- add .gitignore coverage for secrets/logs/local config
+- do not execute arbitrary user shell input
+- do not add dangerous presets like rm, sudo, chmod, curl | bash, etc.
+
+Deliverables:
+- complete Node.js project structure
+- package.json
+- README with exact setup instructions for WSL/Linux
+- .env.example
+- repos.example.json
+- source code for the bot and command system
+- local storage/log structure
+- clean command handlers
+- any small utilities/helpers needed
+
+Suggested commands:
+- /start
+- /help
+- /repos
+- /repo <name>
+- /status
+- /run <preset>
+- /prompt <text>
+- /lastlog
+
+Non-goals for V1:
+- no web dashboard
+- no multi-user support
+- no arbitrary shell command execution
+- no agent swarm system
+- no queue workers unless truly needed
+- no API billing integrations
+- no cloud deployment requirements
+- no database unless clearly justified
+
+Verification:
+- ensure the bot starts cleanly
+- ensure unauthorized chat IDs are blocked
+- ensure repo selection works
+- ensure preset command execution works inside the selected repo
+- ensure logs are created
+- ensure prompt saving works
+- ensure README setup steps are exact and usable
+
+Output requirements:
+- implement the code directly
+- keep the architecture small and clean
+- summarize the final structure
+- summarize setup steps
+- summarize how this V1 can evolve into a richer orchestration platform later
